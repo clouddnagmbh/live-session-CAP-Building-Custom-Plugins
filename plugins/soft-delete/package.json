@@ -30,6 +30,12 @@
           "purgeAfter": "P365D"
         }
       }
+    },
+    "schema": {
+      "buildTaskType": {
+        "name": "soft-delete",
+        "description": "Emits a soft-delete housekeeping manifest (entities + retention) to gen/soft-delete."
+      }
     }
   }
 }
