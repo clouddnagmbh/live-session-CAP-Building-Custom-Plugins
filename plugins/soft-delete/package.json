@@ -24,6 +24,7 @@
   "cds": {
     "requires": {
       "soft-delete": {
+        "model": "@clouddna/cds-plugin-soft-delete",
         "purgeAfter": "P90D",
         "[production]": {
           "purgeAfter": "P365D"
