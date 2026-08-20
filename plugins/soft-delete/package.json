@@ -1,0 +1,34 @@
+{
+  "name": "@clouddna/cds-plugin-soft-delete",
+  "version": "1.0.0",
+  "description": "CDS plugin adding declarative soft delete: DELETE marks rows instead of removing them, READs hide them, restore() brings them back.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "main": "cds-plugin.js",
+  "files": [
+    "cds-plugin.js",
+    "index.cds",
+    "lib",
+    "README.md"
+  ],
+  "keywords": [
+    "cap",
+    "cds",
+    "cds-plugin",
+    "sap",
+    "soft-delete"
+  ],
+  "peerDependencies": {
+    "@sap/cds": ">=10"
+  },
+  "cds": {
+    "requires": {
+      "soft-delete": {
+        "purgeAfter": "P90D",
+        "[production]": {
+          "purgeAfter": "P365D"
+        }
+      }
+    }
+  }
+}

@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
+    "@clouddna/cds-plugin-soft-delete": "^1.0.0",
     "@sap/cds": "^10",
     "flags": "^1.0.0"
   },
