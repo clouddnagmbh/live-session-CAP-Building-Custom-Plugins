@@ -65,23 +65,27 @@ ${lines.join('\n') || '// extend <your.Entity> with softDeleted;'}
 const extend = name => `extend ${name} with softDeleted;`
 
 /**
- * Entities worth offering: the persistence entities actually exposed by a
- * service in this project. Anything a service does not serve cannot be
- * soft-deleted through the API anyway, and this keeps reuse models such as
- * `@sap/cds/common` out of the generated file.
+ * Entities worth offering: the project's *own* persistence entities.
+ *
+ * `$location.file` is project-relative for definitions declared in this
+ * project and absolute (or absent) for anything pulled in from a reuse
+ * package, which keeps models such as `@sap/cds/common` out of the
+ * generated file. Projections are skipped — soft delete belongs on the
+ * entity that owns the table.
  */
 async function softDeletableCandidates () {
   try {
+    const { isAbsolute } = cds.utils.path
     const csn = await cds.load('*', { root: cds.root })
-    const served = new Set()
-    for (const def of Object.values(csn.definitions)) {
-      const from = (def.projection ?? def.query?.SELECT)?.from?.ref?.[0]
-      if (from && typeof from === 'string') served.add(from)
-    }
-    return [...served].filter(name => {
-      const def = csn.definitions[name]
-      return def?.kind === 'entity' && !def.query && !def.projection && !name.endsWith('.texts')
-    }).sort()
+    return Object.entries(csn.definitions)
+      .filter(([name, d]) => {
+        if (d.kind !== 'entity' || d.query || d.projection) return false
+        if (name.endsWith('.texts')) return false
+        const file = d.$location?.file
+        return !!file && !isAbsolute(file) && !file.includes('node_modules')
+      })
+      .map(([name]) => name)
+      .sort()
   } catch {
     return []
   }
