@@ -1,0 +1,12 @@
+{
+  "name": "flags",
+  "version": "1.0.0",
+  "description": "Warm-up plugin: replaces country names with flag emojis for @flagify-annotated elements.",
+  "type": "module",
+  "main": "cds-plugin.js",
+  "private": true,
+  "license": "Apache-2.0",
+  "peerDependencies": {
+    "@sap/cds": ">=10"
+  }
+}

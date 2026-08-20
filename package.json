@@ -3,7 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "@sap/cds": "^10"
+    "@sap/cds": "^10",
+    "flags": "^1.0.0"
   },
   "devDependencies": {
     "@cap-js/sqlite": "^3"
@@ -11,5 +12,8 @@
   "scripts": {
     "start": "cds-serve"
   },
-  "private": true
+  "private": true,
+  "workspaces": [
+    "plugins/*"
+  ]
 }
