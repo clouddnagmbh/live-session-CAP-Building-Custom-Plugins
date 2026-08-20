@@ -1,4 +1,6 @@
 using { clouddna.softdelete.softDeleted } from '@clouddna/cds-plugin-soft-delete';
-using { clouddna.support } from '../db/schema';
 
-extend support.Incidents with softDeleted;
+// Every entity listed here marks rows on DELETE instead of removing them,
+// hides them from READs, and gets a bound restore() action.
+// extend clouddna.support.Customers with softDeleted;
+extend clouddna.support.Incidents with softDeleted;
