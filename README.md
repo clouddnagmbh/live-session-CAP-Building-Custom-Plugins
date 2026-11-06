@@ -32,7 +32,7 @@ Everything a CAP plugin can contribute, on one feature:
 
 | What | Check |
 |---|---|
-| Node.js **22+** (24 recommended) | `node -v` — CDS 10 dropped Node 20 |
+| Node.js **22.12+** (24 recommended) | `node -v` — Node 20 is out of support; on 22 `@cap-js/sqlite` prints an `ExperimentalWarning` on every start, 24 is quiet |
 | `@sap/cds-dk` 10 | `npm i -g @sap/cds-dk@10` then `cds -v` |
 | `jq` | `jq --version` — used to read CSN output |
 
@@ -116,8 +116,8 @@ set DEBUG=plugins && cds watch
 
 ```log
 [cds.plugins] - fetched plugins in: 1.25ms
-[cds.plugins] - loading @sap/cds-fiori: { impl: 'node_modules/@sap/cds-fiori/cds-plugin.js' }
 [cds.plugins] - loading @cap-js/sqlite: { impl: 'node_modules/@cap-js/sqlite/cds-plugin.js' }
+[cds.plugins] - loading @sap/cds-fiori: { impl: 'node_modules/@sap/cds-fiori/cds-plugin.js' }
 [cds.plugins] - loaded plugins in: 3.576ms
 ```
 
@@ -168,8 +168,9 @@ Three consequences worth knowing, none of them obvious:
 
 - **`devDependencies` are skipped when `NODE_ENV=production`.** That is *why*
   `@cap-js/sqlite` sits in devDependencies — it disappears in production by design.
-- **Plugins load in parallel** (`Promise.all`), with only `@sap/cds-mtxs` and
-  `@cap-js/telemetry` prioritised. Never rely on load order between plugins.
+- **Plugins load in parallel** (`Promise.all`). Only three are loaded ahead of the pack:
+  `@sap/cds-mtxs`, `@cap-js/sqlite` (since cds 10.2, so `@cap-js/ai` can override it) and
+  `@cap-js/telemetry`. Never rely on load order between plugins.
 - **`CDS_PLUGINS` can inject one** without touching `package.json` at all.
 
 ---
@@ -413,13 +414,19 @@ actions.** The declarative road gets us 90% of the way and then stops.
 
 `git checkout 04-model-programmatic`
 
-`cds.on('loaded')` fires every time a model is loaded — and it is the **last point at
-which the model can still be changed**, before it is compiled to EDMX, to the runtime
-model, and deployed to the database. Order from `@sap/cds/server.js`:
+`cds.on('loaded')` fires every time a model is loaded — and it is the **one point where a
+change reaches everything at once**: the EDMX metadata, the runtime model and the database
+schema are all derived from the CSN *after* it. Order from `@sap/cds/server.js`:
 
 ```
 bootstrap → loaded → compile.to.edmx → compile.for.runtime → connect → serving → served → listening
 ```
+
+Later hooks exist, but each one serves a single target: `compile.to.edmx`,
+`compile.for.runtime` and `compile.to.dbx` are [events][compile-events] too, fired every
+time *that* compilation runs. Patch on `loaded` and you do it once.
+
+[compile-events]: https://cap.cloud.sap/docs/node.js/cds-compile#lifecycle-events
 
 👉 `plugins/soft-delete/lib/model.js` — the whole model layer:
 
@@ -512,15 +519,17 @@ export function registerHandlers (services) {
         })
 
         srv.on('DELETE', entity, async req => {
-          const affected = await UPDATE(req.subject)
+          const result = await UPDATE(req.subject)
             .set({ deletedAt: new Date().toISOString(), deletedBy: req.user.id })
             .where('deletedAt is null')
-          if (!affected) return req.reject(404, 'Record does not exist or was already deleted.')
+          if (!affected(result)) return req.reject(404, 'Record does not exist or was already deleted.')
         })
 
         srv.on('restore', entity, async req => {
-          const affected = await UPDATE(req.subject).set({ deletedAt: null, deletedBy: null })
-          if (!affected) return req.reject(404, 'Record does not exist.')
+          const result = await UPDATE(req.subject)
+            .set({ deletedAt: null, deletedBy: null })
+            .where('deletedAt is not null')   // restoring a live row is a 404, not a silent 204
+          if (!affected(result)) return req.reject(404, 'Record does not exist or is not deleted.')
         })
       }
     })
@@ -633,9 +642,12 @@ The service says the incident is gone. The database says it never moved, and now
 > `CDS_REQUIRES_DB_CREDENTIALS_URL=db.sqlite cds watch`. Both processes then share one
 > database — re-run `cds deploy` to reset between demos.
 
-> **One shape to double-check on upgrades.** `await UPDATE(...)` resolves to a plain
-> number of affected rows on `@sap/cds` 10.0.6. CDS 10 is unifying write results towards
-> an array with an `.affected` property, so re-verify this when you bump the runtime.
+> **Two result shapes, one helper.** Since cds 10.0 *app-service* writes resolve to an
+> array carrying `.affected` (opt out: `cds.env.features.legacy_srv_results`). A db-level
+> `UPDATE` like ours still resolves to the plain number while
+> `cds.env.features.legacy_db_results` is true — the default in cds 10.2, and marked for
+> inversion in `@cap-js/db-service`. `affected = result => result?.affected ?? result`
+> reads both, so the plugin survives that flip without a release.
 
 ---
 
@@ -662,15 +674,18 @@ export const addPlugin = () => class extends cds.add.Plugin {
   }
   async combine () {
     const { hasHana, hasMultitenancy } = cds.add.readProject()
-    if (hasHana) this.pushMessage?.('...review the HDI table migration before deploying.')
+    if (hasHana) console.log('...review the HDI table migration before deploying.')
   }
 }
 ```
 
-- `run()` — runs when *your* facet is added
-- `combine()` — runs when *any other* facet is added, so you can react to `cds add hana`
-  or `cds add mta` appearing later
-- `cds.add.merge().into()` merges JSON and YAML semantically, **preserving comments**
+- `run()` — runs once, when *your* facet is added
+- `combine()` — runs on *every* `cds add` in the project, your own included, so you can
+  react to `cds add hana` or `cds add mta` appearing later
+- `cds.add.merge().into()` merges JSON and YAML semantically; for YAML it works on the AST
+  and **preserves comments**
+- hints go out via `console.log`, as the built-in facets do — `pushMessage()` exists on
+  build plugins only
 
 ### The ESM factory pattern
 
@@ -739,8 +754,8 @@ cat gen/db/soft-delete/manifest.json
 { "purgeAfter": "P90D", "entities": ["clouddna.support.Incidents"] }
 ```
 
-👉 A plugin can also contribute to the **configuration schema**, so its settings get
-code completion in `package.json` and `.cdsrc.json`:
+👉 A plugin can also contribute to the **configuration schema** (beta), so its settings
+get code completion in `package.json` and `.cdsrc.json`:
 
 ```jsonc
 "cds": {
@@ -761,12 +776,19 @@ The contribution points are exactly `buildTaskType`, `databaseType` and `cds`.
 
 `git checkout 08-tests`
 
-CDS 10 ships `cds.test` v1 with **Vitest** support; Jest is on the way out.
+`cds.test` 1.0 (April 2026) is runner-agnostic: Node's built-in runner, **Vitest**, Mocha
+and, for now, Jest. CAP's own suites moved to Vitest and the Node runner, and Jest support
+is slated for removal — new CAP projects are ESM, which Jest never handled well. `cds test`
+on the CLI wraps Node's runner; we use Vitest.
 
 ```bash
-npm add -D @cap-js/cds-test vitest
+npm add -D @cap-js/cds-test vitest chai
 npm test
 ```
+
+> `chai` is what `cds.test`'s `expect` is built on. The model suite has no server and no
+> `cds.test()` call, so it imports `chai` directly — declare it rather than leaning on a
+> transitive dependency.
 
 Two suites, and the split matters:
 
@@ -832,13 +854,13 @@ cd plugins/soft-delete && npm pack --dry-run
 ```
 
 ```log
-npm notice 2.3kB README.md
+npm notice 2.5kB README.md
 npm notice 685B  cds-plugin.js
 npm notice 902B  index.cds
-npm notice 2.9kB lib/add.js
-npm notice 1.3kB lib/build.js
+npm notice 3.3kB lib/add.js
+npm notice 1.5kB lib/build.js
 npm notice 2.0kB lib/model.js
-npm notice 3.2kB lib/runtime.js
+npm notice 3.9kB lib/runtime.js
 npm notice 941B  package.json
 ```
 
@@ -851,17 +873,24 @@ A workspace symlink is *not* the same as an installed package. `files` mistakes,
 
 ```bash
 cd plugins/soft-delete && npm pack --pack-destination /tmp
-cds init /tmp/consumer-smoke --add nodejs,sqlite,tiny-sample
+cds init /tmp/consumer-smoke --add nodejs,sqlite,sample
 cd /tmp/consumer-smoke && npm install
 npm add /tmp/clouddna-cds-plugin-soft-delete-1.0.0.tgz
 cds add soft-delete
 cds watch
 ```
 
-A different project, a different model shape, a genuine `node_modules` install — and
+The bookshop sample has a `db/` model with `Books`, `Authors` and `Genres` behind two
+services, so `cds add soft-delete` lists all three and `srv/soft-delete.cds` is yours to
+trim. A different project, a different model shape, a genuine `node_modules` install — and
 `DELETE`/`restore()` behave identically. `cds build` produces the manifest there too.
 
-That is the whole point of a plugin: `npm add`, and a feature appears.
+That is the whole point of a plugin: `npm add`, and a feature appears. Once the package is
+on a registry it is even one command, with the beta `--package` option of `cds add`:
+
+```bash
+cds add soft-delete -p @clouddna/cds-plugin-soft-delete
+```
 
 > Publishing to npm is one command further (`npm publish --access public` for a scoped
 > package). `npm pack` plus this smoke test proves the same things without occupying a
